@@ -93,14 +93,48 @@ def parse_png_metadata(file_path):
                 # Format CreateDate if possible for human readability
                 display_date = vrchat_info.get("CreateDate", "N/A")
                 if display_date != "N/A":
+                    # Try various parsing methods
+                    parsed_dt = None
+                    
+                    # Normalize the date string for Python's datetime.fromisoformat
+                    # 1. Replace 'Z' with UTC offset
+                    # 2. Handle sub-second precision: datetime only supports up to 6 digits (microseconds)
+                    # Example: 2026-02-22T03:49:33.9841309+09:00 -> truncation needed
+                    dt_str = display_date.replace("Z", "+00:00")
+                    if "." in dt_str:
+                        # Split by '.' and '+' or '-' for timezone
+                        parts = dt_str.split(".")
+                        base = parts[0]
+                        rest = parts[1]
+                        
+                        # Find timezone separator (+ or -) in the rest
+                        tz_split = rest.find("+") if "+" in rest else rest.find("-")
+                        if tz_split != -1:
+                            subseconds = rest[:tz_split]
+                            timezone = rest[tz_split:]
+                            # Truncate subseconds to 6 digits
+                            dt_str = f"{base}.{subseconds[:6]}{timezone}"
+                        else:
+                            # No timezone found, just truncate subseconds
+                            dt_str = f"{base}.{rest[:6]}"
+
+                    # Try fromisoformat
                     try:
-                        # Handle ISO format including Z and timezone offsets
-                        # Replace Z with +00:00 for fromisoformat compatibility in some Python versions
-                        dt_str = display_date.replace("Z", "+00:00")
-                        dt = datetime.fromisoformat(dt_str)
-                        display_date = dt.strftime("%Y/%m/%d %H:%M:%S")
+                        parsed_dt = datetime.fromisoformat(dt_str)
                     except Exception:
                         pass
+                    
+                    # Fallback to common XMP/ISO patterns
+                    if not parsed_dt:
+                        for fmt in ("%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M:%S", "%Y:%m:%d %H:%M:%S"):
+                            try:
+                                parsed_dt = datetime.strptime(display_date, fmt)
+                                break
+                            except Exception:
+                                continue
+                    
+                    if parsed_dt:
+                        display_date = parsed_dt.strftime("%Y/%m/%d %H:%M:%S")
 
                 print(f"\n--- VRChat Photo Information ---")
                 print(f"日時: {display_date}")
