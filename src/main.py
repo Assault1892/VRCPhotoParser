@@ -2,9 +2,58 @@ import argparse
 import json
 import sys
 import xml.dom.minidom
+from datetime import datetime
 
 from PIL import Image
 from PIL.PngImagePlugin import PngInfo
+
+
+def extract_vrchat_xml_info(xml_str):
+    """Extract specific VRChat fields from XMP XML string."""
+    info = {}
+    try:
+        dom = xml.dom.minidom.parseString(xml_str)
+        # XMP data is usually inside rdf:Description
+        descriptions = dom.getElementsByTagName("rdf:Description")
+
+        # Tags to look for (both as attributes and nested elements)
+        targets = {
+            "CreateDate": ["xmp:CreateDate"],
+            "Author": ["xmp:Author"],
+            "WorldID": ["vrc:WorldID"],
+            "WorldDisplayName": ["vrc:WorldDisplayName"],
+            "AuthorID": ["vrc:AuthorID"],
+        }
+
+        for desc in descriptions:
+            for key, tags in targets.items():
+                if info.get(key):
+                    continue
+                # Try attributes first
+                for tag in tags:
+                    val = desc.getAttribute(tag)
+                    if val:
+                        info[key] = val
+                        break
+                # Try nested elements if not found as attribute
+                if not info.get(key):
+                    for tag in tags:
+                        elements = desc.getElementsByTagName(tag)
+                        if elements and elements[0].firstChild:
+                            info[key] = elements[0].firstChild.nodeValue
+                            break
+
+        # If not in rdf:Description, search globally
+        for key, tags in targets.items():
+            if not info.get(key):
+                for tag in tags:
+                    elements = dom.getElementsByTagName(tag)
+                    if elements and elements[0].firstChild:
+                        info[key] = elements[0].firstChild.nodeValue
+                        break
+    except Exception:
+        pass
+    return info
 
 
 def parse_png_metadata(file_path):
@@ -28,10 +77,42 @@ def parse_png_metadata(file_path):
                 print("\nNo additional metadata (text chunks) found.")
                 return
 
-            print(f"\n--- PNG Metadata (VRChat / VRCX) ---")
+            # Pre-scan for VRChat XML info
+            vrchat_xml = metadata.get("XML:com.adobe.xmp")
+            vrchat_info = {}
+            if vrchat_xml:
+                # Handle bytes if necessary
+                xml_str = (
+                    vrchat_xml.decode("utf-8", errors="ignore")
+                    if isinstance(vrchat_xml, bytes)
+                    else vrchat_xml
+                )
+                vrchat_info = extract_vrchat_xml_info(xml_str)
+
+            if vrchat_info:
+                # Format CreateDate if possible for human readability
+                display_date = vrchat_info.get("CreateDate", "N/A")
+                if display_date != "N/A":
+                    try:
+                        # Handle ISO format including Z and timezone offsets
+                        # Replace Z with +00:00 for fromisoformat compatibility in some Python versions
+                        dt_str = display_date.replace("Z", "+00:00")
+                        dt = datetime.fromisoformat(dt_str)
+                        display_date = dt.strftime("%Y/%m/%d %H:%M:%S")
+                    except Exception:
+                        pass
+
+                print(f"\n--- VRChat Photo Information ---")
+                print(f"日時: {display_date}")
+                print(f"ワールド名: {vrchat_info.get('WorldDisplayName', 'N/A')}")
+                print(f"ワールドID: {vrchat_info.get('WorldID', 'N/A')}")
+                print(f"撮影者: {vrchat_info.get('Author', 'N/A')}")
+                print(f"撮影者ID: {vrchat_info.get('AuthorID', 'N/A')}")
+
+            print(f"\n--- PNG Metadata (VRChat / VRCX Raw) ---")
             found_target = False
             for key, value in metadata.items():
-                # Handle bytes values (PNG chunks can be utf-8 or latin-1)
+                # Handle bytes values
                 if isinstance(value, bytes):
                     try:
                         raw_str = value.decode("utf-8").strip()
@@ -55,7 +136,9 @@ def parse_png_metadata(file_path):
                         # Filter out XML declaration and empty lines
                         lines = pretty_xml.splitlines()
                         # Skip the first line if it's the XML declaration (<?xml ... ?>)
-                        start_idx = 1 if lines and lines[0].strip().startswith("<?xml") else 0
+                        start_idx = (
+                            1 if lines and lines[0].strip().startswith("<?xml") else 0
+                        )
                         display_value = "\n".join(
                             [line for line in lines[start_idx:] if line.strip()]
                         )
