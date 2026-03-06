@@ -56,6 +56,38 @@ def extract_vrchat_xml_info(xml_str):
     return info
 
 
+def parse_vrc_instance_id(instance_id):
+    """
+    Parse VRChat instanceId into components.
+    Format: world_id:instance_number~type(owner_id)~region(code)
+    """
+    if not instance_id or ":" not in instance_id:
+        return None
+
+    parts = instance_id.split("~")
+    base_part = parts[0].split(":")
+
+    res = {
+        "world_id": base_part[0],
+        "instance_number": base_part[1] if len(base_part) > 1 else "N/A",
+        "instance_type": "public",
+        "owner_id": "N/A",
+        "region": "us",  # VRChat default is usually us
+    }
+
+    for opt in parts[1:]:
+        if opt.startswith("region("):
+            res["region"] = opt[7:-1]
+        elif "(" in opt and opt.endswith(")"):
+            idx = opt.find("(")
+            res["instance_type"] = opt[:idx]
+            res["owner_id"] = opt[idx + 1 : -1]
+        else:
+            res["instance_type"] = opt
+
+    return res
+
+
 def parse_png_metadata(file_path):
     try:
         with Image.open(file_path) as img:
@@ -81,7 +113,6 @@ def parse_png_metadata(file_path):
             vrchat_xml = metadata.get("XML:com.adobe.xmp")
             vrchat_info = {}
             if vrchat_xml:
-                # Handle bytes if necessary
                 xml_str = (
                     vrchat_xml.decode("utf-8", errors="ignore")
                     if isinstance(vrchat_xml, bytes)
@@ -89,64 +120,107 @@ def parse_png_metadata(file_path):
                 )
                 vrchat_info = extract_vrchat_xml_info(xml_str)
 
-            if vrchat_info:
-                # Format CreateDate if possible for human readability
+            # Pre-scan for VRCX JSON info
+            vrcx_info = {}
+            for key, value in metadata.items():
+                if isinstance(value, (str, bytes)):
+                    raw_str = (
+                        value.decode("utf-8", errors="ignore")
+                        if isinstance(value, bytes)
+                        else value
+                    )
+                    if "Description" in key or "[Description]" in raw_str:
+                        json_start = raw_str.find("{")
+                        if json_start != -1:
+                            try:
+                                parsed = json.loads(raw_str[json_start:])
+                                if (
+                                    isinstance(parsed, dict)
+                                    and parsed.get("application") == "VRCX"
+                                ):
+                                    vrcx_info = parsed
+                                    break
+                            except:
+                                pass
+
+            # 1. Consolidated Photo Information
+            if vrchat_info or vrcx_info:
+                print(f"\n--- Photo Information ---")
+
+                # Date (Prefer XML)
                 display_date = vrchat_info.get("CreateDate", "N/A")
                 if display_date != "N/A":
-                    # Try various parsing methods
-                    parsed_dt = None
-                    
-                    # Normalize the date string for Python's datetime.fromisoformat
-                    # 1. Replace 'Z' with UTC offset
-                    # 2. Handle sub-second precision: datetime only supports up to 6 digits (microseconds)
-                    # Example: 2026-02-22T03:49:33.9841309+09:00 -> truncation needed
+                    # Normalize for fromisoformat
                     dt_str = display_date.replace("Z", "+00:00")
                     if "." in dt_str:
-                        # Split by '.' and '+' or '-' for timezone
                         parts = dt_str.split(".")
                         base = parts[0]
                         rest = parts[1]
-                        
-                        # Find timezone separator (+ or -) in the rest
                         tz_split = rest.find("+") if "+" in rest else rest.find("-")
                         if tz_split != -1:
                             subseconds = rest[:tz_split]
                             timezone = rest[tz_split:]
-                            # Truncate subseconds to 6 digits
                             dt_str = f"{base}.{subseconds[:6]}{timezone}"
                         else:
-                            # No timezone found, just truncate subseconds
                             dt_str = f"{base}.{rest[:6]}"
-
-                    # Try fromisoformat
                     try:
                         parsed_dt = datetime.fromisoformat(dt_str)
-                    except Exception:
-                        pass
-                    
-                    # Fallback to common XMP/ISO patterns
-                    if not parsed_dt:
-                        for fmt in ("%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M:%S", "%Y:%m:%d %H:%M:%S"):
+                        display_date = parsed_dt.strftime("%Y/%m/%d %H:%M:%S")
+                    except:
+                        for fmt in (
+                            "%Y-%m-%dT%H:%M:%SZ",
+                            "%Y-%m-%dT%H:%M:%S%z",
+                            "%Y-%m-%dT%H:%M:%S",
+                            "%Y:%m:%d %H:%M:%S",
+                        ):
                             try:
                                 parsed_dt = datetime.strptime(display_date, fmt)
+                                display_date = parsed_dt.strftime("%Y/%m/%d %H:%M:%S")
                                 break
-                            except Exception:
+                            except:
                                 continue
-                    
-                    if parsed_dt:
-                        display_date = parsed_dt.strftime("%Y/%m/%d %H:%M:%S")
-
-                print(f"\n--- VRChat Photo Information ---")
                 print(f"日時: {display_date}")
-                print(f"ワールド名: {vrchat_info.get('WorldDisplayName', 'N/A')}")
-                print(f"ワールドID: {vrchat_info.get('WorldID', 'N/A')}")
-                print(f"撮影者: {vrchat_info.get('Author', 'N/A')}")
-                print(f"撮影者ID: {vrchat_info.get('AuthorID', 'N/A')}")
 
-            print(f"\n--- PNG Metadata (VRChat / VRCX Raw) ---")
+                # World Information
+                world_name = vrcx_info.get("world", {}).get("name") or vrchat_info.get(
+                    "WorldDisplayName", "N/A"
+                )
+                world_id = vrcx_info.get("world", {}).get("id") or vrchat_info.get(
+                    "WorldID", "N/A"
+                )
+                print(f"ワールド: {world_name} ({world_id})")
+
+                # Instance Details (VRCX specific)
+                instance_id = vrcx_info.get("world", {}).get("instanceId")
+                if instance_id:
+                    parsed = parse_vrc_instance_id(instance_id)
+                    if parsed:
+                        print(
+                            f"インスタンス: #{parsed['instance_number']} ({parsed['instance_type']}) / Region: {parsed['region']}"
+                        )
+                        if parsed["owner_id"] != "N/A":
+                            print(f"インスタンス作成者ID: {parsed['owner_id']}")
+
+                # Author Information
+                author_name = vrcx_info.get("author", {}).get(
+                    "displayName"
+                ) or vrchat_info.get("Author", "N/A")
+                author_id = vrcx_info.get("author", {}).get("id") or vrchat_info.get(
+                    "AuthorID", "N/A"
+                )
+                print(f"撮影者: {author_name} ({author_id})")
+
+            # 2. VRCX Player List
+            players = vrcx_info.get("players", [])
+            if players:
+                print(f"\n--- Players in Instance ({len(players)}人) ---")
+                for p in players:
+                    print(f"  - {p.get('displayName', 'N/A')} ({p.get('id', 'N/A')})")
+
+            # 3. Raw Metadata
+            print(f"\n--- Raw Metadata (Targeted Chunks) ---")
             found_target = False
             for key, value in metadata.items():
-                # Handle bytes values
                 if isinstance(value, bytes):
                     try:
                         raw_str = value.decode("utf-8").strip()
@@ -160,35 +234,25 @@ def parse_png_metadata(file_path):
                 should_display = False
                 display_value = raw_str
 
-                # Target 1: VRChat Metadata (XML:com.adobe.xmp)
                 if key == "XML:com.adobe.xmp":
                     should_display = True
                     try:
                         dom = xml.dom.minidom.parseString(raw_str)
-                        # Pretty print the XML
                         pretty_xml = dom.toprettyxml(indent="    ")
-                        # Filter out XML declaration and empty lines
                         lines = pretty_xml.splitlines()
-                        # Skip the first line if it's the XML declaration (<?xml ... ?>)
                         start_idx = (
                             1 if lines and lines[0].strip().startswith("<?xml") else 0
                         )
                         display_value = "\n".join(
                             [line for line in lines[start_idx:] if line.strip()]
                         )
-                    except Exception:
-                        # Fallback to raw string if XML parsing fails
+                    except:
                         pass
-
-                # Target 2: VRCX Metadata (JSON found in "Description" chunk)
                 elif key == "Description" or "[Description]" in raw_str:
-                    # VRCX stores metadata in JSON format after "[Description]" prefix
                     json_start = raw_str.find("{")
                     if json_start != -1:
-                        json_data = raw_str[json_start:].strip()
                         try:
-                            parsed_json = json.loads(json_data)
-                            # Verify if the application key is "VRCX"
+                            parsed_json = json.loads(raw_str[json_start:])
                             if (
                                 isinstance(parsed_json, dict)
                                 and parsed_json.get("application") == "VRCX"
@@ -197,7 +261,7 @@ def parse_png_metadata(file_path):
                                 display_value = json.dumps(
                                     parsed_json, indent=4, ensure_ascii=False
                                 )
-                        except json.JSONDecodeError:
+                        except:
                             pass
 
                 if should_display:
