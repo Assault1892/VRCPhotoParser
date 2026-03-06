@@ -64,54 +64,70 @@ def parse_vrc_instance_id(instance_id):
     Friends: world_id:instance_id~friends(owner_id)~region(code)
     Invite+: world_id:instance_id~private(owner_id)~canRequestInvite~region(code)
     Invite: world_id:instance_id~private(owner_id)~region(code)
+    Group: world_id:instance_id~group(id)~groupAccessType(type)~region(code)
     """
     if not instance_id or ":" not in instance_id:
         return None
-
+        
     parts = instance_id.split("~")
     base_part = parts[0].split(":")
-
+    
     res = {
         "world_id": base_part[0],
         "instance_id": base_part[1] if len(base_part) > 1 else "N/A",
         "owner_id": None,
+        "group_id": None,
         "region": "us",
     }
-
+    
     internal_type = "public"
+    group_access_type = None
     can_request_invite = False
-
+    
     for opt in parts[1:]:
         if opt == "canRequestInvite":
             can_request_invite = True
         elif opt.startswith("region("):
             res["region"] = opt[7:-1]
+        elif opt.startswith("group("):
+            res["group_id"] = opt[6:-1]
+        elif opt.startswith("groupAccessType("):
+            group_access_type = opt[16:-1]
         elif "(" in opt and opt.endswith(")"):
             idx = opt.find("(")
             internal_type = opt[:idx]
-            res["owner_id"] = opt[idx + 1 : -1]
+            res["owner_id"] = opt[idx+1:-1]
         else:
-            # For cases like ~friends or ~private without parentheses if they exist
             internal_type = opt
-
-    # Map internal types to user-friendly VRChat display names
-    type_map = {
-        "public": "Public",
-        "hidden": "Friend+",
-        "friends": "Friends",
-        "private": "Invite+" if can_request_invite else "Invite",
-    }
-    res["instance_type"] = type_map.get(internal_type, internal_type)
-
-    # Map region codes to Japanese names
+            
+    # Map types to human-friendly names
+    if res["group_id"]:
+        # Group instance mapping
+        group_type_map = {
+            "public": "Group Public",
+            "plus": "Group+",
+            "members": "Group Only"
+        }
+        res["instance_type"] = group_type_map.get(group_access_type, f"Group ({group_access_type})")
+    else:
+        # Regular instance mapping
+        type_map = {
+            "public": "Public",
+            "hidden": "Friend+",
+            "friends": "Friends",
+            "private": "Invite+" if can_request_invite else "Invite"
+        }
+        res["instance_type"] = type_map.get(internal_type, internal_type)
+    
+    # Map region codes
     region_map = {
         "jp": "日本",
         "us": "アメリカ西",
         "use": "アメリカ東",
-        "eu": "ヨーロッパ",
+        "eu": "ヨーロッパ"
     }
     res["region"] = region_map.get(res["region"], res["region"])
-
+    
     return res
 
 
@@ -151,20 +167,13 @@ def parse_png_metadata(file_path):
             vrcx_info = {}
             for key, value in metadata.items():
                 if isinstance(value, (str, bytes)):
-                    raw_str = (
-                        value.decode("utf-8", errors="ignore")
-                        if isinstance(value, bytes)
-                        else value
-                    )
+                    raw_str = value.decode("utf-8", errors="ignore") if isinstance(value, bytes) else value
                     if "Description" in key or "[Description]" in raw_str:
                         json_start = raw_str.find("{")
                         if json_start != -1:
                             try:
                                 parsed = json.loads(raw_str[json_start:])
-                                if (
-                                    isinstance(parsed, dict)
-                                    and parsed.get("application") == "VRCX"
-                                ):
+                                if isinstance(parsed, dict) and parsed.get("application") == "VRCX":
                                     vrcx_info = parsed
                                     break
                             except:
@@ -173,11 +182,11 @@ def parse_png_metadata(file_path):
             # 1. Consolidated Photo Information
             if vrchat_info or vrcx_info:
                 print(f"\n--- Photo Information ---")
-
+                
                 # Date (Prefer XML)
                 display_date = vrchat_info.get("CreateDate", "N/A")
                 if display_date != "N/A":
-                    # Normalize sub-seconds for fromisoformat
+                    # Normalize sub-seconds
                     dt_str = display_date.replace("Z", "+00:00")
                     if "." in dt_str:
                         parts = dt_str.split(".")
@@ -194,13 +203,7 @@ def parse_png_metadata(file_path):
                         parsed_dt = datetime.fromisoformat(dt_str)
                         display_date = parsed_dt.strftime("%Y/%m/%d %H:%M:%S")
                     except:
-                        # Fallback for other formats
-                        for fmt in (
-                            "%Y-%m-%dT%H:%M:%SZ",
-                            "%Y-%m-%dT%H:%M:%S%z",
-                            "%Y-%m-%dT%H:%M:%S",
-                            "%Y:%m:%d %H:%M:%S",
-                        ):
+                        for fmt in ("%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M:%S", "%Y:%m:%d %H:%M:%S"):
                             try:
                                 parsed_dt = datetime.strptime(display_date, fmt)
                                 display_date = parsed_dt.strftime("%Y/%m/%d %H:%M:%S")
@@ -210,30 +213,20 @@ def parse_png_metadata(file_path):
                 print(f"日時: {display_date}")
 
                 # World Information
-                world_name = vrcx_info.get("world", {}).get("name") or vrchat_info.get(
-                    "WorldDisplayName", "N/A"
-                )
-                world_id = vrcx_info.get("world", {}).get("id") or vrchat_info.get(
-                    "WorldID", "N/A"
-                )
+                world_name = vrcx_info.get("world", {}).get("name") or vrchat_info.get("WorldDisplayName", "N/A")
+                world_id = vrcx_info.get("world", {}).get("id") or vrchat_info.get("WorldID", "N/A")
                 print(f"ワールド: {world_name} ({world_id})")
 
-                # Instance Details (VRCX specific)
+                # Instance Details
                 instance_id = vrcx_info.get("world", {}).get("instanceId")
                 if instance_id:
                     parsed = parse_vrc_instance_id(instance_id)
                     if parsed:
-                        print(
-                            f"インスタンス: {parsed['instance_type']} #{parsed['instance_id']} / 地域: {parsed['region']}"
-                        )
+                        print(f"インスタンス: {parsed['instance_type']} #{parsed['instance_id']} / Region: {parsed['region']}")
 
                 # Author Information
-                author_name = vrcx_info.get("author", {}).get(
-                    "displayName"
-                ) or vrchat_info.get("Author", "N/A")
-                author_id = vrcx_info.get("author", {}).get("id") or vrchat_info.get(
-                    "AuthorID", "N/A"
-                )
+                author_name = vrcx_info.get("author", {}).get("displayName") or vrchat_info.get("Author", "N/A")
+                author_id = vrcx_info.get("author", {}).get("id") or vrchat_info.get("AuthorID", "N/A")
                 print(f"撮影者: {author_name} ({author_id})")
 
             # 2. VRCX Player List
@@ -266,12 +259,8 @@ def parse_png_metadata(file_path):
                         dom = xml.dom.minidom.parseString(raw_str)
                         pretty_xml = dom.toprettyxml(indent="    ")
                         lines = pretty_xml.splitlines()
-                        start_idx = (
-                            1 if lines and lines[0].strip().startswith("<?xml") else 0
-                        )
-                        display_value = "\n".join(
-                            [line for line in lines[start_idx:] if line.strip()]
-                        )
+                        start_idx = 1 if lines and lines[0].strip().startswith("<?xml") else 0
+                        display_value = "\n".join([line for line in lines[start_idx:] if line.strip()])
                     except:
                         pass
                 elif key == "Description" or "[Description]" in raw_str:
@@ -279,14 +268,9 @@ def parse_png_metadata(file_path):
                     if json_start != -1:
                         try:
                             parsed_json = json.loads(raw_str[json_start:])
-                            if (
-                                isinstance(parsed_json, dict)
-                                and parsed_json.get("application") == "VRCX"
-                            ):
+                            if isinstance(parsed_json, dict) and parsed_json.get("application") == "VRCX":
                                 should_display = True
-                                display_value = json.dumps(
-                                    parsed_json, indent=4, ensure_ascii=False
-                                )
+                                display_value = json.dumps(parsed_json, indent=4, ensure_ascii=False)
                         except:
                             pass
 
