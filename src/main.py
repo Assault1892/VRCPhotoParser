@@ -32,18 +32,28 @@ def parse_png_metadata(file_path):
                 # VRChat and other tools often store JSON in these chunks
                 display_value = value
                 if isinstance(value, str):
-                    trimmed = value.strip()
-                    if (trimmed.startswith("{") and trimmed.endswith("}")) or (
-                        trimmed.startswith("[") and trimmed.endswith("]")
+                    raw_str = value.strip()
+                    json_data = None
+
+                    # Handle specific "[Description]" prefix
+                    if raw_str.startswith("[Description]"):
+                        json_data = raw_str[len("[Description]") :].strip()
+                    # Also handle direct JSON objects/arrays
+                    elif (raw_str.startswith("{") and raw_str.endswith("}")) or (
+                        raw_str.startswith("[") and raw_str.endswith("]")
                     ):
+                        json_data = raw_str
+
+                    if json_data:
                         try:
                             # Try to pretty-print JSON if possible
-                            parsed_json = json.loads(trimmed)
+                            parsed_json = json.loads(json_data)
                             display_value = json.dumps(
                                 parsed_json, indent=4, ensure_ascii=False
                             )
                         except json.JSONDecodeError:
-                            pass
+                            # If it's not valid JSON after all, keep the original raw string (without prefix if stripped)
+                            display_value = json_data
 
                 print(f"[{key}]:")
                 print(display_value)
