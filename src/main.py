@@ -48,22 +48,20 @@ def parse_png_metadata(file_path):
                 if key == "XML:com.adobe.xmp":
                     should_display = True
                 
-                # Target 2: VRCX/VRChat (Key is "Description" or Value contains "[Description]")
+                # Target 2: VRCX (Key is "Description" or Value contains "[Description]")
                 elif key == "Description" or "[Description]" in raw_str:
-                    should_display = True
                     # Look for JSON part starting with '{'
                     json_start = raw_str.find('{')
                     if json_start != -1:
                         json_data = raw_str[json_start:].strip()
                         try:
                             parsed_json = json.loads(json_data)
-                            display_value = json.dumps(parsed_json, indent=4, ensure_ascii=False)
+                            # Only display if it's explicitly from VRCX
+                            if isinstance(parsed_json, dict) and parsed_json.get("application") == "VRCX":
+                                should_display = True
+                                display_value = json.dumps(parsed_json, indent=4, ensure_ascii=False)
                         except json.JSONDecodeError:
-                            # If parsing fails, fall back to stripped string
-                            if "[Description]" in raw_str:
-                                display_value = raw_str.replace("[Description]", "").strip()
-                    elif "[Description]" in raw_str:
-                        display_value = raw_str.replace("[Description]", "").strip()
+                            pass
 
                 if should_display:
                     print(f"[{key}]:")
