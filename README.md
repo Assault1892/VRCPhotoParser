@@ -1,2 +1,2 @@
-# VRCPhotoParser
-VRCPP (VRChat Photo Parser) - parsing vrchat photo png chunk, show world name / user / date...
+# VRChat Photo Parser
+VRChatで撮影した写真ファイルを解析し、撮影した日時・ワールド名・ユーザー名などを表示するツールです.
