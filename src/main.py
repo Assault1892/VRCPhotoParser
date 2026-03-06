@@ -52,9 +52,12 @@ def parse_png_metadata(file_path):
                         dom = xml.dom.minidom.parseString(raw_str)
                         # Pretty print the XML
                         pretty_xml = dom.toprettyxml(indent="    ")
-                        # Filter out empty lines often added by toprettyxml
+                        # Filter out XML declaration and empty lines
+                        lines = pretty_xml.splitlines()
+                        # Skip the first line if it's the XML declaration (<?xml ... ?>)
+                        start_idx = 1 if lines and lines[0].strip().startswith("<?xml") else 0
                         display_value = "\n".join(
-                            [line for line in pretty_xml.splitlines() if line.strip()]
+                            [line for line in lines[start_idx:] if line.strip()]
                         )
                     except Exception:
                         # Fallback to raw string if XML parsing fails
