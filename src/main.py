@@ -176,9 +176,9 @@ def parse_png_metadata(file_path):
             # print(f"Resolution: {img.width}x{img.height}")
 
             if vrchat_info or vrcx_info:
-                # Date (Prefer XML)
-                display_date = vrchat_info.get("CreateDate", "N/A")
-                if display_date != "N/A":
+                # Date (XML only)
+                display_date = vrchat_info.get("CreateDate")
+                if display_date:
                     # Normalize sub-seconds
                     dt_str = display_date.replace("Z", "+00:00")
                     if "." in dt_str:
@@ -203,7 +203,7 @@ def parse_png_metadata(file_path):
                                 break
                             except:
                                 continue
-                print(f"日時: {display_date}")
+                    print(f"日時: {display_date}")
 
                 # World Information
                 world_name = vrcx_info.get("world", {}).get("name") or vrchat_info.get("WorldDisplayName", "N/A")
