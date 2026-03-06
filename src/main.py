@@ -1,6 +1,7 @@
 import argparse
 import json
 import sys
+import xml.dom.minidom
 
 from PIL import Image
 from PIL.PngImagePlugin import PngInfo
@@ -47,6 +48,15 @@ def parse_png_metadata(file_path):
                 # Target 1: [XML:com.adobe.xmp] (Key based)
                 if key == "XML:com.adobe.xmp":
                     should_display = True
+                    try:
+                        dom = xml.dom.minidom.parseString(raw_str)
+                        # Pretty print the XML
+                        pretty_xml = dom.toprettyxml(indent="    ")
+                        # Filter out empty lines often added by toprettyxml
+                        display_value = "\n".join([line for line in pretty_xml.splitlines() if line.strip()])
+                    except Exception:
+                        # Fallback to raw string if XML parsing fails
+                        pass
                 
                 # Target 2: VRCX (Key is "Description" or Value contains "[Description]")
                 elif key == "Description" or "[Description]" in raw_str:
