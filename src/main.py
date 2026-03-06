@@ -28,7 +28,7 @@ def parse_png_metadata(file_path):
                 print("\nNo additional metadata (text chunks) found.")
                 return
 
-            print(f"\n--- PNG Metadata (Targeted Chunks) ---")
+            print(f"\n--- PNG Metadata (VRChat / VRCX) ---")
             found_target = False
             for key, value in metadata.items():
                 # Handle bytes values (PNG chunks can be utf-8 or latin-1)
@@ -45,7 +45,7 @@ def parse_png_metadata(file_path):
                 should_display = False
                 display_value = raw_str
 
-                # Target 1: VRChat ([XML:com.adobe.xmp] (Key based))
+                # Target 1: VRChat Metadata (XML:com.adobe.xmp)
                 if key == "XML:com.adobe.xmp":
                     should_display = True
                     try:
@@ -60,15 +60,15 @@ def parse_png_metadata(file_path):
                         # Fallback to raw string if XML parsing fails
                         pass
 
-                # Target 2: VRCX (Key is "Description" or Value contains "[Description]")
+                # Target 2: VRCX Metadata (JSON found in "Description" chunk)
                 elif key == "Description" or "[Description]" in raw_str:
-                    # Look for JSON part starting with '{'
+                    # VRCX stores metadata in JSON format after "[Description]" prefix
                     json_start = raw_str.find("{")
                     if json_start != -1:
                         json_data = raw_str[json_start:].strip()
                         try:
                             parsed_json = json.loads(json_data)
-                            # Only display if it's explicitly from VRCX
+                            # Verify if the application key is "VRCX"
                             if (
                                 isinstance(parsed_json, dict)
                                 and parsed_json.get("application") == "VRCX"
@@ -87,7 +87,7 @@ def parse_png_metadata(file_path):
                     found_target = True
 
             if not found_target:
-                print("No XMP or VRCX metadata found in this image.")
+                print("No VRChat or VRCX metadata found in this image.")
 
     except FileNotFoundError:
         print(f"Error: File '{file_path}' not found.")
@@ -97,7 +97,7 @@ def parse_png_metadata(file_path):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Extract and display specific PNG metadata (XMP and VRCX/Description)."
+        description="Extract and display PNG metadata specifically for VRChat and VRCX."
     )
     parser.add_argument("file", help="Path to the PNG image file")
 
