@@ -2,7 +2,7 @@ import argparse
 import json
 import locale
 import sys
-import xml.dom.minidom
+import xml.etree.ElementTree as ET
 from datetime import datetime
 from PIL import Image
 
@@ -94,40 +94,61 @@ def normalize_vrc_date(raw_date_str):
     return raw_date_str
 
 def extract_vrchat_xml_info(xml_str):
-    """Extract specific VRChat fields from XMP XML string."""
+    """Extract VRChat fields from XMP XML using robust namespace handling."""
     info = {}
     try:
-        dom = xml.dom.minidom.parseString(xml_str)
-        descriptions = dom.getElementsByTagName("rdf:Description")
-        targets = {
-            "CreateDate": ["xmp:CreateDate"],
-            "Author": ["xmp:Author"],
-            "WorldID": ["vrc:WorldID"],
-            "WorldDisplayName": ["vrc:WorldDisplayName"],
-            "AuthorID": ["vrc:AuthorID"],
+        # Define common XMP namespaces
+        ns = {
+            'rdf': 'http://www.w3.org/1999/02/22-rdf-syntax-ns#',
+            'xmp': 'http://ns.adobe.com/xap/1.0/',
+            'vrc': 'http://vrchat.com/xmp/1.0/'
         }
+        
+        root = ET.fromstring(xml_str)
+        # Description might contain attributes or child elements
+        descriptions = root.findall('.//rdf:Description', ns)
+        
         for desc in descriptions:
-            for key, tags in targets.items():
-                if info.get(key): continue
-                for tag in tags:
-                    val = desc.getAttribute(tag)
-                    if val:
-                        info[key] = val
-                        break
+            # 1. Try attributes (minidom-style attributes)
+            for key, tag in [
+                ("CreateDate", "{http://ns.adobe.com/xap/1.0/}CreateDate"),
+                ("Author", "{http://ns.adobe.com/xap/1.0/}Author"),
+                ("WorldID", "{http://vrchat.com/xmp/1.0/}WorldID"),
+                ("WorldDisplayName", "{http://vrchat.com/xmp/1.0/}WorldDisplayName"),
+                ("AuthorID", "{http://vrchat.com/xmp/1.0/}AuthorID"),
+            ]:
                 if not info.get(key):
-                    for tag in tags:
-                        elements = desc.getElementsByTagName(tag)
-                        if elements and elements[0].firstChild:
-                            info[key] = elements[0].firstChild.nodeValue
-                            break
-        for key, tags in targets.items():
-            if not info.get(key):
-                for tag in tags:
-                    elements = dom.getElementsByTagName(tag)
-                    if elements and elements[0].firstChild:
-                        info[key] = elements[0].firstChild.nodeValue
-                        break
-    except: pass
+                    val = desc.get(tag)
+                    if val: info[key] = val
+
+            # 2. Try nested elements
+            for key, xpath in [
+                ("CreateDate", ".//xmp:CreateDate"),
+                ("Author", ".//xmp:Author"),
+                ("WorldID", ".//vrc:WorldID"),
+                ("WorldDisplayName", ".//vrc:WorldDisplayName"),
+                ("AuthorID", ".//vrc:AuthorID"),
+            ]:
+                if not info.get(key):
+                    el = desc.find(xpath, ns)
+                    if el is not None and el.text:
+                        info[key] = el.text
+
+        # 3. Global search if still missing
+        if not all(k in info for k in ["CreateDate", "Author", "WorldID"]):
+            for key, xpath in [
+                ("CreateDate", ".//xmp:CreateDate"),
+                ("Author", ".//xmp:Author"),
+                ("WorldID", ".//vrc:WorldID"),
+                ("WorldDisplayName", ".//vrc:WorldDisplayName"),
+                ("AuthorID", ".//vrc:AuthorID"),
+            ]:
+                if not info.get(key):
+                    el = root.find(xpath, ns)
+                    if el is not None and el.text:
+                        info[key] = el.text
+    except Exception:
+        pass
     return info
 
 def parse_vrc_instance_id(instance_id):
@@ -140,12 +161,10 @@ def parse_vrc_instance_id(instance_id):
     
     res = {
         "world_id": base_part[0],
-        "id": base_part[1] if len(base_part) > 1 else "N/A",
-        "type": "public",
+        "instance_id": base_part[1] if len(base_part) > 1 else "N/A",
         "owner_id": None,
         "group_id": None,
         "region": "us",
-        "can_request_invite": False
     }
     
     internal_type = "public"
@@ -249,8 +268,6 @@ def print_cli_output(data):
     info = data["consolidated"]
     if not info:
         print(f"--- {t['photo_info_header']} ---")
-        # print(f"{t['filename']}: {data['file_path']}")
-        # print(f"{t['resolution']}: {data['resolution']}")
         print(f"\n{t['no_metadata']}")
         return
 
@@ -269,12 +286,6 @@ def print_cli_output(data):
         print(f"\n--- {t['players']} ({t['players_count'].format(len(info['players']))}) ---")
         for p in info["players"]:
             print(f"  - {p.get('displayName', 'N/A')} ({p.get('id', 'N/A')})")
-
-    # Raw Metadata (Commented out)
-    """
-    metadata = data.get("raw_metadata", {}) # This structure changed in refactoring, 
-                                            # but keeping the comment concept.
-    """
 
 def main():
     parser = argparse.ArgumentParser(
