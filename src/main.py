@@ -1,4 +1,5 @@
 import argparse
+import asyncio
 import json
 import locale
 import struct
@@ -6,7 +7,7 @@ import sys
 import xml.etree.ElementTree as ET
 import zlib
 from datetime import datetime
-from PIL import Image
+import aiofiles
 
 # --- Language Resources ---
 
@@ -58,7 +59,6 @@ LANGUAGES = {
 def get_translator():
     """Get the appropriate translator based on system locale."""
     try:
-        # Use fallback for environments where getdefaultlocale is deprecated or fails
         sys_lang = locale.getdefaultlocale()[0]
         lang_code = sys_lang[:2] if sys_lang else "en"
     except:
@@ -162,21 +162,22 @@ def parse_vrc_instance_id(instance_id):
     res["display_region"] = t["region_names"].get(res["region"], res["region"])
     return res
 
-def read_png_chunks(file_path):
-    """Fast PNG chunk reader to extract metadata without full image decode."""
+async def read_png_chunks_async(file_path):
+    """Fast PNG chunk reader to extract metadata without full image decode (Async)."""
     chunks = {}
     resolution = "Unknown"
     try:
-        with open(file_path, "rb") as f:
-            sig = f.read(8)
+        async with aiofiles.open(file_path, "rb") as f:
+            sig = await f.read(8)
             if sig != b"\x89PNG\r\n\x1a\n": return None, None
             while True:
-                length_bytes = f.read(4)
+                length_bytes = await f.read(4)
                 if not length_bytes: break
                 length = struct.unpack(">I", length_bytes)[0]
-                chunk_type = f.read(4).decode("ascii", errors="ignore")
-                data = f.read(length)
-                f.read(4) # CRC
+                chunk_type_bytes = await f.read(4)
+                chunk_type = chunk_type_bytes.decode("ascii", errors="ignore")
+                data = await f.read(length)
+                await f.read(4) # CRC
                 if chunk_type == "IHDR":
                     w, h = struct.unpack(">II", data[:8])
                     resolution = f"{w}x{h}"
@@ -186,11 +187,8 @@ def read_png_chunks(file_path):
                         chunks[parts[0].decode("latin-1", errors="ignore")] = parts[1].decode("latin-1", errors="ignore")
                 elif chunk_type == "zTXt":
                     parts = data.split(b"\x00", 2)
-                    if len(parts) == 2: # No compression method or text?
-                        pass
-                    elif len(parts) >= 2:
+                    if len(parts) >= 2:
                         key = parts[0].decode("latin-1", errors="ignore")
-                        # parts[1] is compression method (usually 0)
                         try:
                             compressed_data = parts[2] if len(parts) > 2 else b""
                             text = zlib.decompress(compressed_data).decode("utf-8", errors="ignore")
@@ -200,8 +198,6 @@ def read_png_chunks(file_path):
                     parts = data.split(b"\x00", 5)
                     if len(parts) >= 6:
                         key = parts[0].decode("utf-8", errors="ignore")
-                        # parts[1]: compression flag, parts[2]: compression method
-                        # parts[3]: language tag, parts[4]: translated keyword
                         text = parts[5].decode("utf-8", errors="ignore")
                         if parts[1] == b"\x01":
                             try: text = zlib.decompress(parts[5]).decode("utf-8", errors="ignore")
@@ -213,22 +209,17 @@ def read_png_chunks(file_path):
 
 # --- Core Engine ---
 
-def parse_photo_metadata(file_path):
-    """Read PNG metadata efficiently using binary chunk parsing."""
+async def parse_photo_metadata_async(file_path):
+    """Read PNG metadata efficiently and asynchronously."""
     try:
-        metadata, resolution = read_png_chunks(file_path)
+        metadata, resolution = await read_png_chunks_async(file_path)
         if metadata is None:
             return {"error": t["error_not_png"].format("Unknown")}
         
-        result = {
-            "file_path": file_path,
-            "resolution": resolution,
-            "vrchat": {},
-            "vrcx": {},
-            "consolidated": {}
-        }
+        result = {"file_path": file_path, "resolution": resolution, 
+                  "vrchat": {}, "vrcx": {}, "consolidated": {}}
 
-        # 1. XML (VRChat) - Key is usually 'XML:com.adobe.xmp' or just 'com.adobe.xmp'
+        # 1. XML (VRChat)
         vrchat_xml = metadata.get("XML:com.adobe.xmp") or metadata.get("com.adobe.xmp")
         if vrchat_xml:
             result["vrchat"] = extract_vrchat_xml_info(vrchat_xml)
@@ -288,12 +279,12 @@ def print_cli_output(data):
         for p in info["players"]:
             print(f"  - {p.get('displayName', 'N/A')} ({p.get('id', 'N/A')})")
 
-def main():
+async def main():
     parser = argparse.ArgumentParser(description="Extract and display PNG metadata specifically for VRChat and VRCX.")
     parser.add_argument("file", help="Path to the PNG image file")
     args = parser.parse_args()
-    data = parse_photo_metadata(args.file)
+    data = await parse_photo_metadata_async(args.file)
     print_cli_output(data)
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

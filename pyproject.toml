@@ -5,5 +5,6 @@ description = "parsing vrchat photo png chunk"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+    "aiofiles>=25.1.0",
     "pillow>=12.1.1",
 ]
