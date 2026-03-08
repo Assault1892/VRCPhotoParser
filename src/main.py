@@ -272,7 +272,7 @@ def print_cli_output(data):
     print(f"{t['world']}: {info['world_name']} ({info['world_id']})")
     if info["instance"]:
         inst = info["instance"]
-        print(f"{t['instance']}: {inst['display_type']} #{inst['id']} / {t['region']}: {inst['display_region']}")
+        print(f"{t['instance']}: {inst['instance_type']} #{inst['instance_id']} / {t['region']}: {inst['display_region']}")
     print(f"{t['author']}: {info['author_name']} ({info['author_id']})")
     if info["players"]:
         print(f"\n--- {t['players']} ({t['players_count'].format(len(info['players']))}) ---")
