@@ -1,9 +1,67 @@
 import argparse
 import json
+import locale
 import sys
 import xml.dom.minidom
 from datetime import datetime
 from PIL import Image
+
+# --- Language Resources ---
+
+LANGUAGES = {
+    "ja": {
+        "datetime": "日時",
+        "world": "ワールド",
+        "instance": "インスタンス",
+        "author": "撮影者",
+        "region": "リージョン",
+        "players": "同席プレイヤー",
+        "filename": "Filename",
+        "resolution": "Resolution",
+        "photo_info_header": "Photo Information",
+        "players_count": "{}人",
+        "no_metadata": "VRChat または VRCX のメタデータが見つかりませんでした。",
+        "error_not_png": "PNG画像ではありません (Format: {})",
+        "region_names": {
+            "jp": "日本",
+            "us": "アメリカ西",
+            "use": "アメリカ東",
+            "eu": "ヨーロッパ"
+        }
+    },
+    "en": {
+        "datetime": "DateTime",
+        "world": "World",
+        "instance": "Instance",
+        "author": "Author",
+        "region": "Region",
+        "players": "Players",
+        "filename": "Filename",
+        "resolution": "Resolution",
+        "photo_info_header": "Photo Information",
+        "players_count": "{} players",
+        "no_metadata": "No VRChat or VRCX metadata found.",
+        "error_not_png": "Not a PNG image (Format: {})",
+        "region_names": {
+            "jp": "Japan",
+            "us": "US West",
+            "use": "US East",
+            "eu": "Europe"
+        }
+    }
+}
+
+def get_translator():
+    """Get the appropriate translator based on system locale."""
+    try:
+        sys_lang = locale.getdefaultlocale()[0]
+        lang_code = sys_lang[:2] if sys_lang else "en"
+    except:
+        lang_code = "en"
+    
+    return LANGUAGES.get(lang_code, LANGUAGES["en"])
+
+t = get_translator()
 
 # --- Utilities (Logic Only) ---
 
@@ -90,33 +148,36 @@ def parse_vrc_instance_id(instance_id):
         "can_request_invite": False
     }
     
+    internal_type = "public"
+    group_access_type = None
+    can_request_invite = False
+    
     for opt in parts[1:]:
         if opt == "canRequestInvite":
-            res["can_request_invite"] = True
+            can_request_invite = True
         elif opt.startswith("region("):
             res["region"] = opt[7:-1]
         elif opt.startswith("group("):
             res["group_id"] = opt[6:-1]
         elif opt.startswith("groupAccessType("):
-            res["group_access_type"] = opt[16:-1]
+            group_access_type = opt[16:-1]
         elif "(" in opt and opt.endswith(")"):
             idx = opt.find("(")
-            res["type"] = opt[:idx]
+            internal_type = opt[:idx]
             res["owner_id"] = opt[idx+1:-1]
         else:
-            res["type"] = opt
+            internal_type = opt
             
     # Map internal types to display names
     if res["group_id"]:
         group_map = {"public": "Group Public", "plus": "Group+", "members": "Group Only"}
-        res["display_type"] = group_map.get(res.get("group_access_type"), f"Group ({res.get('group_access_type')})")
+        res["display_type"] = group_map.get(group_access_type, f"Group ({group_access_type})")
     else:
         type_map = {"public": "Public", "hidden": "Friend+", "friends": "Friends", 
-                    "private": "Invite+" if res["can_request_invite"] else "Invite"}
-        res["display_type"] = type_map.get(res["type"], res["type"])
+                    "private": "Invite+" if can_request_invite else "Invite"}
+        res["display_type"] = type_map.get(internal_type, internal_type)
         
-    region_map = {"jp": "日本", "us": "アメリカ西", "use": "アメリカ東", "eu": "ヨーロッパ"}
-    res["display_region"] = region_map.get(res["region"], res["region"])
+    res["display_region"] = t["region_names"].get(res["region"], res["region"])
     
     return res
 
@@ -127,7 +188,7 @@ def parse_photo_metadata(file_path):
     try:
         with Image.open(file_path) as img:
             if img.format != "PNG":
-                return {"error": f"Not a PNG image (Format: {img.format})"}
+                return {"error": t["error_not_png"].format(img.format)}
             
             metadata = img.info
             result = {
@@ -187,27 +248,33 @@ def print_cli_output(data):
 
     info = data["consolidated"]
     if not info:
-        print("--- Photo Information ---")
-        # print(f"Filename: {data['file_path']}")
-        # print(f"Resolution: {data['resolution']}")
-        print("\nNo VRChat or VRCX metadata found.")
+        print(f"--- {t['photo_info_header']} ---")
+        # print(f"{t['filename']}: {data['file_path']}")
+        # print(f"{t['resolution']}: {data['resolution']}")
+        print(f"\n{t['no_metadata']}")
         return
 
-    print(f"--- Photo Information ---")
+    print(f"--- {t['photo_info_header']} ---")
     if info["datetime"] != "N/A":
-        print(f"日時: {info['datetime']}")
-    print(f"ワールド: {info['world_name']} ({info['world_id']})")
+        print(f"{t['datetime']}: {info['datetime']}")
+    print(f"{t['world']}: {info['world_name']} ({info['world_id']})")
     
     if info["instance"]:
         inst = info["instance"]
-        print(f"インスタンス: {inst['display_type']} #{inst['id']} / Region: {inst['display_region']}")
+        print(f"{t['instance']}: {inst['display_type']} #{inst['id']} / {t['region']}: {inst['display_region']}")
         
-    print(f"撮影者: {info['author_name']} ({info['author_id']})")
+    print(f"{t['author']}: {info['author_name']} ({info['author_id']})")
 
     if info["players"]:
-        print(f"\n--- Players in Instance ({len(info['players'])}人) ---")
+        print(f"\n--- {t['players']} ({t['players_count'].format(len(info['players']))}) ---")
         for p in info["players"]:
             print(f"  - {p.get('displayName', 'N/A')} ({p.get('id', 'N/A')})")
+
+    # Raw Metadata (Commented out)
+    """
+    metadata = data.get("raw_metadata", {}) # This structure changed in refactoring, 
+                                            # but keeping the comment concept.
+    """
 
 def main():
     parser = argparse.ArgumentParser(
